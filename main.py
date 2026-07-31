@@ -7,7 +7,7 @@ from threading import Thread
 import pymongo
 
 # ================== আপনার কনফিগারেশন ==================
-API_TOKEN = '8967501202:AAGVVeNJJQXcIP8GBhQqx4YkjHCyTzkt4gE'
+API_TOKEN = '8605665089:AAGsLWt-Fu1QHG-C90jbDulq3GTC1KXNc18'
 ADMIN_IDS = [8262679678, 8915096050]  # একাধিক এডমিন আইডি
 
 # চ্যানেল কনফিগারেশন
