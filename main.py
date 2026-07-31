@@ -16,8 +16,7 @@ CHANNELS = [
     {"id": -1002183552076, "link": "https://t.me/winfanti", "name": "Winfanti Channel"}
 ]
 
-# MongoDB URI (Render এ ডাটা সেভ রাখার জন্য সেরা মাধ্যম, MongoDB Atlas থেকে ফ্রি পাওয়া যায়)
-# যদি MONGO_URI না থাকে তবে লোকাল JSON ব্যবহার হবে
+# MongoDB URI (Render এ ডাটা সেভ রাখার জন্য)
 MONGO_URI = os.getenv("MONGO_URI", "")
 # ==========================================================
 
@@ -72,6 +71,27 @@ def save_data(data):
     else:
         with open(DATA_FILE, 'w', encoding='utf-8') as f:
             json.dump(data, f, ensure_ascii=False, indent=4)
+    
+    # ডাটা সেভ হওয়ার পর টেলিগ্রামের মেনু বার আপডেট করা হবে
+    sync_telegram_menu_commands()
+
+# ================== টেলিগ্রাম মেনু বার (Bot Commands) আপডেট ==================
+def sync_telegram_menu_commands():
+    try:
+        data = load_data()
+        commands = [
+            types.BotCommand("start", "🚀 স্টার্ট করুন"),
+            types.BotCommand("admin", "⚙️ এডমিন ড্যাশবোর্ড")
+        ]
+        # কাস্টম বাটনগুলোকে বোটের মেনু বারে যোগ করা
+        for btn in data.get("buttons", []):
+            cmd_name = f"btn_{btn['id']}"
+            cmd_desc = btn['title'][:25]  # মেনু ডেসক্রিপশনের সর্বোচ্চ দৈর্ঘ্য
+            commands.append(types.BotCommand(cmd_name, cmd_desc))
+            
+        bot.set_my_commands(commands)
+    except Exception as e:
+        print(f"Error updating commands menu: {e}")
 
 # ================== Keep Alive Web Server (Render এর জন্য) ==================
 app = Flask('')
@@ -126,6 +146,40 @@ def get_main_keyboard(user_id):
         
     return markup
 
+# ================== কনটেন্ট পাঠানোর নিরাপদ ফাংশন ==================
+def send_button_content(chat_id, btn):
+    c_type = btn.get("content_type", "text")
+    f_id = btn.get("file_id")
+    text = btn.get("text", "") or ""
+
+    try:
+        if c_type == "text":
+            bot.send_message(chat_id, text, parse_mode="HTML")
+        elif c_type == "voice":
+            bot.send_voice(chat_id, f_id, caption=text, parse_mode="HTML")
+        elif c_type == "audio":
+            bot.send_audio(chat_id, f_id, caption=text, parse_mode="HTML")
+        elif c_type == "video":
+            bot.send_video(chat_id, f_id, caption=text, parse_mode="HTML")
+        elif c_type == "photo":
+            bot.send_photo(chat_id, f_id, caption=text, parse_mode="HTML")
+        elif c_type == "document":
+            bot.send_document(chat_id, f_id, caption=text, parse_mode="HTML")
+    except Exception:
+        # কোনো কারণে HTML প্রসেস করতে না পারলে প্লেইন টেক্সট হিসেবে পাঠাবে
+        if c_type == "text":
+            bot.send_message(chat_id, text)
+        elif c_type == "voice":
+            bot.send_voice(chat_id, f_id, caption=text)
+        elif c_type == "audio":
+            bot.send_audio(chat_id, f_id, caption=text)
+        elif c_type == "video":
+            bot.send_video(chat_id, f_id, caption=text)
+        elif c_type == "photo":
+            bot.send_photo(chat_id, f_id, caption=text)
+        elif c_type == "document":
+            bot.send_document(chat_id, f_id, caption=text)
+
 # Start Command
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
@@ -136,7 +190,7 @@ def send_welcome(message):
     data = load_data()
     bot.send_message(
         message.chat.id, 
-        data["welcome_text"], 
+        data.get("welcome_text", "বটে আপনাকে স্বাগতম!"), 
         reply_markup=get_main_keyboard(message.from_user.id)
     )
 
@@ -153,6 +207,7 @@ def show_dashboard_menu(chat_id):
     markup = types.InlineKeyboardMarkup()
     markup.add(types.InlineKeyboardButton("➕ নতুন বাটন যোগ করুন", callback_data="add_btn"))
     markup.add(types.InlineKeyboardButton("📝 ওয়েলকাম মেসেজ পরিবর্তন", callback_data="edit_welcome"))
+    markup.add(types.InlineKeyboardButton("🔄 মেনু বার আপডেট করুন", callback_data="sync_menu"))
     
     data = load_data()
     for btn in data["buttons"]:
@@ -175,7 +230,7 @@ def handle_dashboard_callbacks(call):
             bot.answer_callback_query(call.id, "✅ ধন্যবাদ! আপনি সফলভাবে জয়েন করেছেন।")
             bot.delete_message(chat_id, call.message.message_id)
             data = load_data()
-            bot.send_message(chat_id, data["welcome_text"], reply_markup=get_main_keyboard(call.from_user.id))
+            bot.send_message(chat_id, data.get("welcome_text", "স্বাগতম!"), reply_markup=get_main_keyboard(call.from_user.id))
         else:
             bot.answer_callback_query(call.id, "❌ আপনি এখনও সব চ্যানেলে জয়েন করেননি!", show_alert=True)
         return
@@ -194,6 +249,10 @@ def handle_dashboard_callbacks(call):
         msg = bot.send_message(chat_id, "✏️ নতুন **ওয়েলকাম টেক্সট** লিখে পাঠান:")
         bot.register_next_step_handler(msg, process_edit_welcome)
 
+    elif call.data == "sync_menu":
+        sync_telegram_menu_commands()
+        bot.answer_callback_query(call.id, "✅ মেনু বার সফলভাবে আপডেট করা হয়েছে!", show_alert=True)
+
     elif call.data == "back_to_dashboard":
         show_dashboard_menu(chat_id)
 
@@ -210,8 +269,8 @@ def handle_dashboard_callbacks(call):
         btn_id = int(call.data.split("_")[2])
         msg = bot.send_message(
             chat_id, 
-            "🎙️📹🖼️📝 **বাটনের কনটেন্ট সেট করুন:**\n\n"
-            "এখনই আপনার কাঙ্ক্ষিত **ভয়েস নোট**, **ভিডিও**, **অডিও**, **ছবি** অথবা **মেসেজ** পাঠিয়ে দিন।"
+            "🎙️📹🖼️📝📁 **বাটনের কনটেন্ট সেট করুন:**\n\n"
+            "এখনই আপনার কাঙ্ক্ষিত **ভয়েস নোট**, **ভিডিও**, **অডিও**, **ছবি**, **ফাইল/ডকুমেন্ট** অথবা **মেসেজ** পাঠিয়ে দিন।"
         )
         bot.register_next_step_handler(msg, process_edit_btn_content, btn_id)
 
@@ -225,13 +284,16 @@ def handle_dashboard_callbacks(call):
 def show_btn_options(chat_id, btn_id):
     markup = types.InlineKeyboardMarkup()
     markup.add(types.InlineKeyboardButton("✏️ বাটনের নাম পরিবর্তন", callback_data=f"edit_title_{btn_id}"))
-    markup.add(types.InlineKeyboardButton("🎙️/📹/📝 কনটেন্ট সেট (ভয়েস/ভিডিও/লেখা)", callback_data=f"edit_content_{btn_id}"))
+    markup.add(types.InlineKeyboardButton("🎙️/📹/📝/📁 কনটেন্ট সেট করুন", callback_data=f"edit_content_{btn_id}"))
     markup.add(types.InlineKeyboardButton("🗑️ বাটন ডিলিট করুন", callback_data=f"delete_btn_{btn_id}"))
     markup.add(types.InlineKeyboardButton("🔙 ড্যাশবোর্ডে ফিরুন", callback_data="back_to_dashboard"))
     
     bot.send_message(chat_id, f"⚙️ **বাটন কাস্টমাইজেশন (ID: {btn_id})**", reply_markup=markup, parse_mode="Markdown")
 
 def process_add_btn_title(message):
+    if not message.text:
+        bot.send_message(message.chat.id, "❌ বাটনের নাম সঠিক ছিল না। আবার চেষ্টা করুন।")
+        return
     title = message.text
     data = load_data()
     new_id = max([b["id"] for b in data["buttons"]], default=0) + 1
@@ -254,6 +316,9 @@ def process_edit_welcome(message):
     show_dashboard_menu(message.chat.id)
 
 def process_edit_btn_title(message, btn_id):
+    if not message.text:
+        bot.send_message(message.chat.id, "❌ বাটনের নাম সঠিক ছিল না।")
+        return
     data = load_data()
     for b in data["buttons"]:
         if b["id"] == btn_id:
@@ -284,6 +349,9 @@ def process_edit_btn_content(message, btn_id):
     elif message.content_type == 'photo':
         content_type = "photo"
         file_id = message.photo[-1].file_id
+    elif message.content_type == 'document':
+        content_type = "document"
+        file_id = message.document.file_id
 
     for b in data["buttons"]:
         if b["id"] == btn_id:
@@ -296,8 +364,25 @@ def process_edit_btn_content(message, btn_id):
     bot.send_message(message.chat.id, "✅ এই বাটনের কনটেন্ট সফলভাবে সেভ হয়েছে!")
     show_dashboard_menu(message.chat.id)
 
-# ইউজার রেসপন্স
-@bot.message_handler(content_types=['text', 'voice', 'audio', 'video', 'photo'])
+# ================== মেনু বার (Command Menu) রেসপন্স ==================
+@bot.message_handler(func=lambda m: m.text and m.text.startswith('/btn_'))
+def handle_menu_command_clicks(message):
+    if not is_user_subscribed(message.from_user.id):
+        send_force_join_msg(message.chat.id)
+        return
+    
+    try:
+        btn_id = int(message.text.replace('/btn_', ''))
+        data = load_data()
+        for btn in data["buttons"]:
+            if btn["id"] == btn_id:
+                send_button_content(message.chat.id, btn)
+                return
+    except Exception as e:
+        print(f"Error handling menu command: {e}")
+
+# ================== ইউজার রেসপন্স (কিবোর্ড বাটন ক্লিক) ==================
+@bot.message_handler(content_types=['text', 'voice', 'audio', 'video', 'photo', 'document'])
 def handle_user_clicks(message):
     if not is_user_subscribed(message.from_user.id):
         send_force_join_msg(message.chat.id)
@@ -311,23 +396,11 @@ def handle_user_clicks(message):
 
     for btn in data["buttons"]:
         if btn["title"] == user_text:
-            c_type = btn.get("content_type", "text")
-            f_id = btn.get("file_id")
-            caption_text = btn.get("text", "")
-
-            if c_type == "text":
-                bot.send_message(message.chat.id, caption_text, parse_mode="Markdown")
-            elif c_type == "voice":
-                bot.send_voice(message.chat.id, f_id, caption=caption_text, parse_mode="Markdown")
-            elif c_type == "audio":
-                bot.send_audio(message.chat.id, f_id, caption=caption_text, parse_mode="Markdown")
-            elif c_type == "video":
-                bot.send_video(message.chat.id, f_id, caption=caption_text, parse_mode="Markdown")
-            elif c_type == "photo":
-                bot.send_photo(message.chat.id, f_id, caption=caption_text, parse_mode="Markdown")
+            send_button_content(message.chat.id, btn)
             return
 
 if __name__ == '__main__':
     keep_alive()  # Web server চালু হবে
+    sync_telegram_menu_commands()  # বট স্টার্ট হওয়ার সাথে সাথে মেনু বার সেট হবে
     print("Bot is starting successfully...")
     bot.infinity_polling(skip_pending=True)
